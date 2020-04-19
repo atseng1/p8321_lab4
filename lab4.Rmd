@@ -83,7 +83,7 @@ ggplot(nyc_data, aes(x = dailyPM, y = mod1_pred25)) +
 
 # So far, we looked at the predicted observations using all the information in our sample. This does not help us understand how well our model would perform to predict out of sample (well, in our case we can have an idea it won't be particularly good...).
 
-# Let's check out the break down of our data into the train vs test subsets
+# Let's check out the break down of our data into the train vs. test subsets
 nyc_data$train = as.factor(ifelse(nyc_data$date %in% train_df$date, 1, 0))
 table(nyc_data$train)
 
@@ -207,7 +207,7 @@ ggplot(mod2_test_dt, aes(x = dailyPM, y = mod2_pred25_test)) +
   xlab(expression("Observed PM"[2.5]))
 
 # Let's check how we did --
-# R2 and beta of observed vs predicted
+# R2 and beta of observed vs. predicted
 mod2_rsq = summary(lm(mod2_pred25_test ~ dailyPM, data = mod2_test_dt))$r.squared
 
 # RMSE
@@ -237,12 +237,10 @@ model2_cv$results[2:3]; paste("RMSE =", round(mod2_rmse,2)); paste("Rsquared =",
 ```
 
 
-## How do the models compare when you use RMSE vs. when you use CV R-squared values as your evaluation metric? Which model would you select as your final model? Why?
+## Lastly, answer the following questions in (1-3 sentences each):
+#### 1. How do the models compare when you use different evaluation metrics? Which model would you select as your final model? Why?
 
 
-## Describe one setting (in 1-2 sentences) where the implementation of your final model would be useful.
-
-
-## Discussion question: What are some potential limitations or ethical concerns that may arise when interpreting the results from these prediction models?
+#### 2. What are some potential limitations or ethical concerns that may arise when interpreting the results from these prediction models?
 
 
