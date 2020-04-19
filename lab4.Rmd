@@ -1,0 +1,248 @@
+---
+title: 'EHSC P8321: Lab #4 - Prediction Models'
+author: 'YOUR NAME (UNI: ######)'
+date: "Due: April 27, 2020 by 4:00 pm"
+output: word_document
+---
+
+## First install and load all the necessary packages.
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Use the install.packages("") function to install any packages you do not already have
+library(tidyverse)
+library(modelr)
+library(bootstrap)
+library(ggplot2)
+library(lubridate)
+library(caret)
+
+# Set your working directory
+setwd("")
+```
+
+
+## Read in the dataset containing measurements for PM2.5, mean daily temperature, and mean daily RH for NYC from 2002-2009. In this dataset, the PM2.5 data came from the AQS system and the weather data came from NLDAS. There was a separate estimate for each borough, which implies that multiple monitors were used. Population-weighted averaging was used to combine the estimates into a single estimate for the whole city.
+
+```{r load_data}
+nyc_data = read_csv("nyc_data.csv") 
+
+# Explore the data
+head(nyc_data)
+
+# Create day of week and month variables
+nyc_data = nyc_data %>% mutate(dow = as.character(wday(date, label =TRUE)),
+                                month = as.character(month(date, label =TRUE)))
+
+# Create training and testing datasets with a 70/30 split
+set.seed(212)
+
+train_df = sample_frac(nyc_data, 0.7)
+test_df = anti_join(nyc_data, train_df) #, by = "...")
+```
+
+
+## Let's create a simple linear model from this dataset with:
+```{r lm1}
+summary(nyc_data$dailyPM)
+
+# Time series plot: visualize PM2.5 levels over time
+ggplot(nyc_data, aes(date, dailyPM)) + 
+  geom_line(color = "darkorange3") + 
+  theme_bw(base_size = 16) +
+  ylab(expression(PM[2.5]~(mu*g/m^3)))
+
+# First model: only one predictor (temperature), all data in for now
+model1 = lm(dailyPM ~ dailyTemp, data = nyc_data)
+summary(model1)
+
+# Let's check the predicted values from this model
+# Class Question: What does this function do?
+mod1_pred25 = predict(model1)
+
+# Combine observed with predicted data
+mod1_plot = data.frame(nyc_data[c("date", "dailyPM")], mod1_pred25)
+
+# Plot observed vs. predicted time series
+ggplot(nyc_data, aes(date, dailyPM)) + 
+  geom_line(color = "darkorange3") + 
+  theme_bw(base_size = 16) +
+  geom_line(y = mod1_pred25, color = "blue") +
+  ylab(expression(PM[2.5]~(mu*g/m^3)))
+
+# Scatter plot of observed vs. predicted
+ggplot(nyc_data, aes(x = dailyPM, y = mod1_pred25)) + 
+  geom_point(size = 1) + 
+  ylim(5, 20) +
+  theme_bw(base_size = 16) +
+  geom_smooth(method = "lm") + 
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  ylab(expression("Predicted PM"[2.5])) + 
+  xlab(expression("Observed PM"[2.5]))
+
+
+# So far, we looked at the predicted observations using all the information in our sample. This does not help us understand how well our model would perform to predict out of sample (well, in our case we can have an idea it won't be particularly good...).
+
+# Let's check out the break down of our data into the train vs test subsets
+nyc_data$train = as.factor(ifelse(nyc_data$date %in% train_df$date, 1, 0))
+table(nyc_data$train)
+
+ggplot(nyc_data, aes(date, dailyPM, color = train)) + 
+  geom_point() +
+  theme_bw(base_size = 16) + 
+  ylab(expression(PM[2.5]~(mu*g/m^3)))
+
+
+# Next, we use the two datasets that we split from the full dataset. First, we fit our model in the training dataset that contains 70% of data points.
+model1_train = lm(dailyPM ~ dailyTemp, data = train_df)
+summary(model1_train)
+
+# Second, using the parameters estimated in the training dataset above, we predict the PM2.5 concentrations for the days that were in the second dataset (the 30% of the data)
+mod1_pred25_test = predict(model1_train, test_df)
+
+# Just as before, merge the predicted data to the observed, now in the test dataset
+mod1_test_dt = data.frame(test_df[c("date", "dailyPM")], mod1_pred25_test)
+
+# Plot observed vs. predicted time series
+ggplot(mod1_test_dt, aes(date, dailyPM)) + 
+  geom_line(color = "darkorange3") + 
+  theme_bw(base_size = 16) +
+  geom_line(y = mod1_pred25_test, color = "blue") +
+  ylab(expression(PM[2.5]~(mu*g/m^3)))
+
+# Scatter plot of observed vs. predicted
+ggplot(mod1_test_dt, aes(x = dailyPM, y = mod1_pred25_test)) + 
+  geom_point(size=1) + ylim(5, 20) +
+  theme_bw(base_size = 16) +
+  geom_smooth(method = "lm") + 
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  ylab(expression("Predicted PM"[2.5])) + 
+  xlab(expression("Observed PM"[2.5]))
+
+# Let's check how we did --
+# R2 and beta of observed vs. predicted
+mod1_rsq = summary(lm(mod1_pred25_test ~ dailyPM, data = mod1_test_dt))$r.squared
+
+# RMSE
+mod1_rmse = sqrt(mean(model1_train$residuals^2))
+
+mod1_rsq; mod1_rmse
+
+
+# Let's cross validate now!! 10-fold
+set.seed(919)
+model1_cv = train(dailyPM ~ dailyTemp, nyc_data, method = "lm",
+            trControl = trainControl(method = "cv", number = 10)
+            )
+model1_cv
+
+# How do the CV results compare to the spliting results?
+mod1_rmse; mod1_rsq
+
+############################################################################
+### So, first try, not so good! let's do over including more predictors! ###
+############################################################################
+
+model2 = lm(dailyPM ~ dailyTemp + dailyRH + awnd + prcp + dow + month, data = nyc_data)
+summary(model2)
+
+# Let's check the predicted values from this model
+# Class Question: What does this function do?
+mod2_pred25 = predict(model2)
+
+# Combine observed with predicted data
+mod2_plot = data.frame(nyc_data[c("date", "dailyPM")], mod2_pred25)
+
+# Plot observed vs. predicted time series
+ggplot(nyc_data, aes(date, dailyPM)) + 
+  geom_line(color = "darkorange3") + theme_bw(base_size = 16) +
+  geom_line(y = mod2_pred25, color = "blue") +
+  ylab(expression(PM[2.5]~(mu*g/m^3)))
+
+# Visualize the difference between these predictions and predictions from model 1
+ggplot(nyc_data, aes(date, dailyPM)) + 
+  geom_line(color = "darkorange3") + 
+  theme_bw(base_size = 16) +
+  geom_line(y = mod2_pred25, color = "blue") +
+  geom_line(y = mod1_pred25, color = "cadetblue3") +
+  ylab(expression(PM[2.5]~(mu*g/m^3)))
+
+
+# Scatter plot of observed vs. predicted
+ggplot(nyc_data, aes(x = dailyPM, y = mod2_pred25)) + 
+  geom_point(size = 1) + 
+  theme_bw(base_size = 16) +
+  geom_smooth(method = "lm") + 
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  ylab(expression("Predicted PM"[2.5])) + 
+  xlab(expression("Observed PM"[2.5]))
+
+
+# So far, we looked at the predicted observations from model 2 using all the information in our sample. Let's continue to see how we perform out of sample.
+
+# We use the two datasets that we split from the full dataset. First, we fit our model in the training dataset that contains 70% of data points.
+model2_train = lm(dailyPM ~ dailyTemp + dailyRH + awnd + prcp + dow + month, data = train_df)
+summary(model2_train)
+
+# Second, using the parameters estimated in the training dataset above, we predict the PM2.5 concentrations for the days that were in the second dataset (the 30% of the data)
+mod2_pred25_test = predict(model2_train, test_df)
+
+# as before, merge the predicted data to the observed, now in the test dataset
+mod2_test_dt = data.frame(test_df[c("date", "dailyPM")], mod2_pred25_test)
+
+# Plot observed vs. predicted time series
+ggplot(mod2_test_dt, aes(date, dailyPM)) + 
+  geom_line(color = "darkorange3") + 
+  theme_bw(base_size = 16) +
+  geom_line(y = mod2_pred25_test, color = "blue") +
+  ylab(expression(PM[2.5]~(mu*g/m^3)))
+
+# Scatter plot of observed vs. predicted
+ggplot(mod2_test_dt, aes(x = dailyPM, y = mod2_pred25_test)) + 
+  geom_point(size = 1) + 
+  theme_bw(base_size = 16) +
+  geom_smooth(method = "lm") + 
+  geom_abline(intercept = 0, slope = 1, color = "red") +
+  ylab(expression("Predicted PM"[2.5])) + 
+  xlab(expression("Observed PM"[2.5]))
+
+# Let's check how we did --
+# R2 and beta of observed vs predicted
+mod2_rsq = summary(lm(mod2_pred25_test ~ dailyPM, data = mod2_test_dt))$r.squared
+
+# RMSE
+mod2_rmse = sqrt(mean(model2_train$residuals^2))
+
+mod2_rsq; mod2_rmse
+
+
+# Let's cross validate now!! 10-fold
+set.seed(310)
+model2_cv = train(dailyPM ~ dailyTemp + dailyRH + awnd + prcp + dow + month, nyc_data, 
+                   method = "lm",
+            trControl = trainControl(method = "cv", number = 10)
+            )
+model2_cv
+
+# How do the CV results compare to the spliting results?
+mod2_rmse; mod2_rsq
+
+# How do these compare to results from model 1?
+
+# Model 1 
+model1_cv$results[2:3]; paste("RMSE =", round(mod1_rmse,2)); paste("Rsquared =", round(mod1_rsq,3))
+
+# Model 2
+model2_cv$results[2:3]; paste("RMSE =", round(mod2_rmse,2)); paste("Rsquared =", round(mod2_rsq,3))
+```
+
+
+## How do the models compare when you use RMSE vs. when you use CV R-squared values as your evaluation metric? Which model would you select as your final model? Why?
+
+
+## Describe one setting (in 1-2 sentences) where the implementation of your final model would be useful.
+
+
+## Discussion question: What are some potential limitations or ethical concerns that may arise when interpreting the results from these prediction models?
+
+
